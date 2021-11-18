@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 <img src="https://user-images.githubusercontent.com/9434884/43697219-3cb4ef3a-9975-11e8-9a9c-73f4f537442d.png" alt="Sentinel Logo" width="50%">
 
 # Sentinel: The Sentinel of Your Microservices
@@ -178,3 +179,6 @@ If you are using Sentinel, please [add your company here](https://github.com/ali
 ![亲宝宝](https://stlib.qbb6.com/wclt/img/home_hd/version1/title_logo.png)
 ![金汇金融](https://res.jinhui365.com/r/images/logo2.png?v=1.527)
 ![闪电购](http://cdn.52shangou.com/shandianbang/official-source/3.1.1/build/images/logo.png)
+=======
+# sentinel_modify
+>>>>>>> 1cf36965f135237fdfd158de2d9e19aa22cf4f54
