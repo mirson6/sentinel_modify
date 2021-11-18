@@ -1,184 +1,796 @@
-<<<<<<< HEAD
-<img src="https://user-images.githubusercontent.com/9434884/43697219-3cb4ef3a-9975-11e8-9a9c-73f4f537442d.png" alt="Sentinel Logo" width="50%">
 
-# Sentinel: The Sentinel of Your Microservices
 
-[![Sentinel CI](https://github.com/alibaba/Sentinel/actions/workflows/ci.yml/badge.svg)](https://github.com/alibaba/Sentinel/actions/workflows/ci.yml)
-[![Codecov](https://codecov.io/gh/alibaba/Sentinel/branch/master/graph/badge.svg)](https://codecov.io/gh/alibaba/Sentinel)
-[![Maven Central](https://img.shields.io/maven-central/v/com.alibaba.csp/sentinel-core.svg?label=Maven%20Central)](https://search.maven.org/search?q=g:com.alibaba.csp%20AND%20a:sentinel-core)
-[![License](https://img.shields.io/badge/license-Apache%202-4EB1BA.svg)](https://www.apache.org/licenses/LICENSE-2.0.html)
-[![Gitter](https://badges.gitter.im/alibaba/Sentinel.svg)](https://gitter.im/alibaba/Sentinel)
-[![Maintainability](https://cloud.quality-gate.com/dashboard/api/badge?projectName=alibaba_Sentinel&branchName=master)](https://cloud.quality-gate.com/dashboard/branches/7825#overview)
+### 1. 说明
 
-## Introduction
+Sentinel的实时监控数据， 默认是放在内存里面， 采用ConcurrentHashMap结构，只保留5分钟时间内的数据，不能满足实际生产中的监控需要， 这里我们进行二次开发改造。
 
-As distributed systems become increasingly popular, the reliability between services is becoming more important than ever before.
-Sentinel takes "flow" as breakthrough point, and works on multiple fields including **flow control**,
-**traffic shaping**, **circuit breaking** and **system adaptive protection**, to guarantee reliability and resilience for microservices.
+改造使用的版本：
 
-Sentinel has the following features:
+> 1. Sentinel为1.8.X版本
+> 2. InfluxDB为2.X系列版本
 
-- **Rich applicable scenarios**: Sentinel has been wildly used in Alibaba, and has covered almost all the core-scenarios in Double-11 (11.11) Shopping Festivals in the past 10 years, such as “Second Kill” which needs to limit burst flow traffic to meet the system capacity, message peak clipping and valley fills, circuit breaking for unreliable downstream services, cluster flow control, etc.
-- **Real-time monitoring**: Sentinel also provides real-time monitoring ability. You can see the runtime information of a single machine in real-time, and the aggregated runtime info of a cluster with less than 500 nodes.
-- **Widespread open-source ecosystem**: Sentinel provides out-of-box integrations with commonly-used frameworks and libraries such as Spring Cloud, Dubbo and gRPC. You can easily use Sentinel by simply add the adapter dependency to your services.
-- **Polyglot support**: Sentinel has provided native support for Java, [Go](https://github.com/alibaba/sentinel-golang) and [C++](https://github.com/alibaba/sentinel-cpp).
-- **Various SPI extensions**: Sentinel provides easy-to-use SPI extension interfaces that allow you to quickly customize your logic, for example, custom rule management, adapting data sources, and so on.
 
-Features overview:
 
-![features-of-sentinel](./doc/image/sentinel-features-overview-en.png)
+### 2. Sentinel源码改造
 
-## Documentation
+下载Sentinel的源码， 修改sentinel-dashboard模块
 
-See the [Sentinel](https://sentinelguard.io/) for the document website.
+![image-20211118120658008](images/image-20211118120658008.png)
 
-See the [中文文档](https://github.com/alibaba/Sentinel/wiki/%E4%BB%8B%E7%BB%8D) for document in Chinese.
+创建包com.alibaba.csp.sentinel.dashboard.influxdb， 将修改的源码放在此包下：
 
-See the [Wiki](https://github.com/alibaba/Sentinel/wiki) for full documentation, examples, blog posts, operational details and other information.
+1. 创建InfluxDB的映射实体
 
-Sentinel provides integration modules for various open-source frameworks
-(e.g. Spring Cloud, Apache Dubbo, gRPC, Spring WebFlux, Reactor) and service mesh.
-You can refer to [the document](https://github.com/alibaba/Sentinel/wiki/Adapters-to-Popular-Framework) for more information.
+   ```java
+   @Data
+   @Measurement(name = "sentinelInfo")
+   public class InfluxDBMetricEntity {
+   
+       @Column(name = "time")
+       private Instant time;
+       @Column(name = "gmtCreate", tag = true)
+       private long gmtCreate;
+       @Column(name = "gmtModified")
+       private long gmtModified;
+   
+       /**
+        * 监控信息的时间戳
+        */
+       @Column(name = "app", tag = true)
+       private String app;
+       @Column(name = "resource", tag = true)
+       private String resource;
+       @Column(name = "timestamp", tag = true)
+       private long timestamp;
+       @Column(name = "passQps", tag = true)
+       private long passQps;//通过qps
+       @Column(name = "successQps", tag = true)
+       private long successQps;//成功qps
+       @Column(name = "blockQps", tag = true)
+       private long blockQps;//限流qps
+       @Column(name = "_exceptionQps")
+       private long exceptionQps;//异常qps
+   
+       /**
+        * 所有successQps的rt的和
+        */
+       @Column(name = "rt", tag = true)
+       private double rt;
+   
+       /**
+        * 本次聚合的总条数
+        */
+       @Column(name = "count", tag = true)
+       private int count;
+       @Column(name = "resourceCode", tag = true)
+       private int resourceCode;
+   
+   }
+   
+   ```
 
-If you are using Sentinel, please [**leave a comment here**](https://github.com/alibaba/Sentinel/issues/18) to tell us your scenario to make Sentinel better.
-It's also encouraged to add the link of your blog post, tutorial, demo or customized components to [**Awesome Sentinel**](./doc/awesome-sentinel.md).
+   如果要将字段查询出来， 将tag属性设置为true。
 
-## Ecosystem Landscape
 
-![ecosystem-landscape](./doc/image/sentinel-opensource-eco-landscape-en.png)
 
-## Quick Start
+2. InfluxDB的配置类
 
-Below is a simple demo that guides new users to use Sentinel in just 3 steps. It also shows how to monitor this demo using the dashboard.
+   ```java
+   @Configuration
+   @Data
+   public class InfluxDBConfig {
+   
+       /**
+        * influxdb连接URL
+        */
+       @Value("${spring.influx.url:''}")
+       private String influxUrl;
+   
+       /**
+        * influxdb的访问token权限
+        */
+       @Value("${spring.influx.token:''}")
+       private String influxToken;
+   
+       /**
+        * org组织名称
+        */
+       @Value("${spring.influx.org:''}")
+       private String influxOrg;
+   
+       /**
+        * bucket名称
+        */
+       @Value("${spring.influx.bucket:''}")
+       private String influxBucket;
+   
+   
+       /**
+        * 初始化influx client
+        * @return
+        */
+       @Bean
+       public InfluxDBClient influxDBClient() {
+           InfluxDBClient influxDBClient = InfluxDBClientFactory.create(influxUrl, influxToken.toCharArray(), influxOrg, influxBucket);
+           return influxDBClient;
+       }
+   
+       /**
+        * 创建Write Api （负责写入）
+        * @param influxDBClient
+        * @return
+        */
+       @Bean
+       public WriteApiBlocking writeApiBlocking (InfluxDBClient influxDBClient) {
+           WriteApiBlocking writeApiBlocking = influxDBClient.getWriteApiBlocking();
+           return writeApiBlocking;
+       }
+   
+       /**
+        * 创建Query Api （负责查询）
+        * @param influxDBClient
+        * @return
+        */
+       @Bean
+       public QueryApi queryApi(InfluxDBClient influxDBClient) {
+           QueryApi queryApi = influxDBClient.getQueryApi();
+           return queryApi;
+       }
+   
+   }
+   ```
 
-### 1. Add Dependency
+   InfluxDB2.X与influxDB1.X的配置不一样， 不需要配置用户名和密码， 用TOKEN替代， 要增加org与bucket的配置。
 
-**Note:** Sentinel requires JDK 1.8 or later.
+   将InfluxDBClient注入Spring容器， 同时分别注入写入与查询的API操作接口。
 
-If you're using Maven, just add the following dependency in `pom.xml`.
+   
 
-```xml
-<!-- replace here with the latest version -->
-<dependency>
-    <groupId>com.alibaba.csp</groupId>
-    <artifactId>sentinel-core</artifactId>
-    <version>1.8.2</version>
-</dependency>
-```
+3. TOEKN的申请配置
 
-If not, you can download JAR in [Maven Center Repository](https://mvnrepository.com/artifact/com.alibaba.csp/sentinel-core).
+   进入后台，创建TOKEN
 
-### 2. Define Resource
+   ![image-20211118154011306](images/image-20211118154011306.png)
 
-Wrap your code snippet via Sentinel API: `SphU.entry(resourceName)`.
-In below example, it is `System.out.println("hello world");`:
+   再弹出界面， 选择对应的bucket容器
 
-```java
-try (Entry entry = SphU.entry("HelloWorld")) {
-    // Your business logic here.
-    System.out.println("hello world");
-} catch (BlockException e) {
-    // Handle rejected request.
-    e.printStackTrace();
-}
-// try-with-resources auto exit
-```
+   ![image-20211118155408907](images/image-20211118155408907.png)
 
-So far the code modification is done. We've also provided [annotation support module](https://github.com/alibaba/Sentinel/blob/master/sentinel-extension/sentinel-annotation-aspectj/README.md) to define resource easier.
+   保存后， 会生成一个TOKEN， 点击复制
 
-### 3. Define Rules
+   ![image-20211118155455530](images/image-20211118155455530.png)
 
-If we want to limit the access times of the resource, we can **set rules to the resource**.
-The following code defines a rule that limits access to the resource to 20 times per second at the maximum.
 
-```java
-List<FlowRule> rules = new ArrayList<>();
-FlowRule rule = new FlowRule();
-rule.setResource("HelloWorld");
-// set limit qps to 20
-rule.setCount(20);
-rule.setGrade(RuleConstant.FLOW_GRADE_QPS);
-rules.add(rule);
-FlowRuleManager.loadRules(rules);
-```
 
-For more information, please refer to [How To Use](https://github.com/alibaba/Sentinel/wiki/How-to-Use).
+4. 工程配置
 
-### 4. Check the Result
+   ```properties
+   # influxdb连接地址
+   spring.influx.url=http://10.10.20.32:8086
+   # influxdb的访问token
+   spring.influx.token=ZkDPAq8B1XGlT08iT_ZnLFAmiPbndIvomyQ7XZJQtE09KEMJwwunrtExZ9TCcEicuQwRI3riCYGjcqnOLvFQyg==
+   # org组织名称
+   spring.influx.org=mirson
+   # bucket名称
+   spring.influx.bucket=sentinel_app
+   ```
 
-After running the demo for a while, you can see the following records in `~/logs/csp/${appName}-metrics.log.{date}` (When using the default `DateFileLogHandler`).
+   
 
-```
-|--timestamp-|------date time----|-resource-|p |block|s |e|rt  |occupied
-1529998904000|2018-06-26 15:41:44|HelloWorld|20|0    |20|0|0   |0
-1529998905000|2018-06-26 15:41:45|HelloWorld|20|5579 |20|0|728 |0
-1529998906000|2018-06-26 15:41:46|HelloWorld|20|15698|20|0|0   |0
-1529998907000|2018-06-26 15:41:47|HelloWorld|20|19262|20|0|0   |0
-1529998908000|2018-06-26 15:41:48|HelloWorld|20|19502|20|0|0   |0
-1529998909000|2018-06-26 15:41:49|HelloWorld|20|18386|20|0|0   |0
+5. InfluxDB的持久化实现
 
-p stands for incoming request, block for blocked by rules, s for success handled by Sentinel, e for exception count, rt for average response time (ms), occupied stands for occupiedPassQps since 1.5.0 which enable us booking more than 1 shot when entering.
-```
+   InfluxDBMetricsRepository完整代码：
 
-This shows that the demo can print "hello world" 20 times per second.
+   ```java
+   package com.alibaba.csp.sentinel.dashboard.influxdb;
+   
+   import com.alibaba.csp.sentinel.dashboard.datasource.entity.MetricEntity;
+   import com.alibaba.csp.sentinel.dashboard.influxdb.config.InfluxDBConfig;
+   import com.alibaba.csp.sentinel.dashboard.influxdb.entity.InfluxDBMetricEntity;
+   import com.alibaba.csp.sentinel.dashboard.repository.metric.MetricsRepository;
+   import com.alibaba.csp.sentinel.util.StringUtil;
+   import com.influxdb.client.InfluxDBClient;
+   import com.influxdb.client.QueryApi;
+   import com.influxdb.client.WriteApiBlocking;
+   import com.influxdb.client.domain.WritePrecision;
+   import com.influxdb.query.FluxRecord;
+   import com.influxdb.query.FluxTable;
+   import org.springframework.beans.BeanUtils;
+   import org.springframework.beans.factory.annotation.Autowired;
+   import org.springframework.stereotype.Component;
+   import org.springframework.util.CollectionUtils;
+   
+   import java.time.Instant;
+   import java.util.ArrayList;
+   import java.util.HashMap;
+   import java.util.List;
+   import java.util.Map;
+   import java.util.stream.Collectors;
+   
+   @Component("influxDBMetricsRepository")
+   public class InfluxDBMetricsRepository implements MetricsRepository<MetricEntity> {
+   
+       @Autowired
+       private InfluxDBConfig influxDBConfig;
+   
+       @Autowired
+       public WriteApiBlocking writeApiBlocking;
+   
+       @Autowired
+       public InfluxDBClient influxDBClient;
+   
+       @Autowired
+       public QueryApi queryApi;
+   
+   
+       /**
+        * 保存数据
+        * @param metric metric data to save
+        */
+       @Override
+       public synchronized void save(MetricEntity metric) {
+   
+           try {
+               // 记录数据
+               InfluxDBMetricEntity entity = new InfluxDBMetricEntity();
+               BeanUtils.copyProperties(metric, entity, new String[]{"gmtCreate", "gmtModified", "timestamp"});
+               entity.setResource(metric.getResource());
+               entity.setGmtCreate(metric.getGmtCreate().getTime());
+               entity.setGmtModified(metric.getGmtModified().getTime());
+               entity.setTimestamp(metric.getTimestamp().getTime());
+               entity.setPassQps(metric.getPassQps());
+               entity.setSuccessQps(metric.getSuccessQps());
+               entity.setBlockQps(metric.getBlockQps());
+               entity.setExceptionQps(metric.getExceptionQps());
+               entity.setRt(metric.getRt());
+               entity.setCount(metric.getCount());
+               entity.setResourceCode(metric.getResourceCode());
+               entity.setTime(Instant.now());
+               writeApiBlocking.writeMeasurement(WritePrecision.MS, entity);
+   
+           } catch (Exception e) {
+   
+               e.printStackTrace();
+           }
+       }
+   
+       /**
+        * 批量保存
+        * @param metrics metrics to save
+        */
+       @Override
+       public synchronized void saveAll(Iterable<MetricEntity> metrics) {
+   
+           if (metrics == null) {
+               return;
+           }
+           metrics.forEach(metric -> {
+   
+               save(metric);
+   
+           });
+       }
+   
+       /**
+        * 根据时间范围查询数据
+        * @param app       application name for Sentinel
+        * @param resource  resource name
+        * @param startTime start timestamp
+        * @param endTime   end timestamp
+        * @return
+        */
+       @Override
+       public synchronized List<MetricEntity> queryByAppAndResourceBetween(String app, String resource, long startTime, long endTime) {
+   
+           List<MetricEntity> results = new ArrayList<>();
+           if (StringUtil.isBlank(app)) {
+   
+               return results;
+           }
+   
+           // 根据APP和RESOURCE查询时间范围内的数据
+           String flux = String.format("from(bucket:\"%s\") |> range(start: %s, stop: %s)"
+                           + " |> filter(fn: (r) => (r[\"_measurement\"] == \"sentinelInfo\" and r[\"app\"] == \"%s\") and r[\"resource\"] == \"%s\")",
+                   influxDBConfig.getInfluxBucket(), startTime, endTime, app, resource);
+   
+           List<FluxTable> tables = queryApi.query(flux);
+           for (FluxTable fluxTable : tables) {
+               List<FluxRecord> records = fluxTable.getRecords();
+               for (FluxRecord fluxRecord : records) {
+                   MetricEntity metricEntity = MetricEntity.copyOf(fluxRecord);
+                   results.add(metricEntity);
+               }
+           }
+   
+           return results;
+       }
+   
+   
+       @Override
+       public synchronized List<String> listResourcesOfApp(String app) {
+   
+           List<String> results = new ArrayList<>();
+           if (StringUtil.isBlank(app)) {
+   
+               return results;
+           }
+           //查询最近5分钟的指标(实时数据)
+           String command = String.format("from(bucket:\"%s\") |> range(start: -5m)"
+                           + " |> filter(fn: (r) => (r[\"_measurement\"] == \"sentinelInfo\" and r[\"app\"] == \"%s\") )",
+                   influxDBConfig.getInfluxBucket(), app);
+   
+   
+           List<MetricEntity> influxResults = new ArrayList<>();
+   
+           // 查询
+           List<FluxTable> tables = queryApi.query(command);
+           for (FluxTable fluxTable : tables) {
+               List<FluxRecord> records = fluxTable.getRecords();
+               for (FluxRecord fluxRecord : records) {
+                   MetricEntity metricEntity = MetricEntity.copyOf(fluxRecord);
+                   influxResults.add(metricEntity);
+               }
+           }
+   
+           try {
+   
+               if (CollectionUtils.isEmpty(influxResults)) {
+                   return results;
+               }
+               Map<String, MetricEntity> resourceCount = new HashMap<>(32);
+               for (MetricEntity metricEntity : influxResults) {
+                   String resource = metricEntity.getResource();
+                   if (resourceCount.containsKey(resource)) {
+                       // 累加统计
+                       MetricEntity oldEntity = resourceCount.get(resource);
+                       oldEntity.addPassQps(metricEntity.getPassQps());
+                       oldEntity.addRtAndSuccessQps(metricEntity.getRt(), metricEntity.getSuccessQps());
+                       oldEntity.addBlockQps(metricEntity.getBlockQps());
+                       oldEntity.addExceptionQps(metricEntity.getExceptionQps());
+                       oldEntity.addCount(1);
+                   } else {
+   
+                       resourceCount.put(resource, metricEntity);
+                   }
+               }
+               //排序
+               results = resourceCount.entrySet()
+                       .stream()
+                       .sorted((o1, o2) -> {
+                           MetricEntity e1 = o1.getValue();
+                           MetricEntity e2 = o2.getValue();
+                           int t = e2.getBlockQps().compareTo(e1.getBlockQps());
+                           if (t != 0) {
+   
+                               return t;
+                           }
+                           return e2.getPassQps().compareTo(e1.getPassQps());
+                       })
+                       .map(Map.Entry::getKey)
+                       .collect(Collectors.toList());
+           } catch (Exception e) {
+   
+               e.printStackTrace();
+           }
+           return results;
+       }
+   }
+   
+   ```
 
-More examples and information can be found in the [How To Use](https://github.com/alibaba/Sentinel/wiki/How-to-Use) section.
+   
 
-The working principles of Sentinel can be found in [How it works](https://github.com/alibaba/Sentinel/wiki/How-it-works) section.
+6. 需要改造的其他源码
 
-Samples can be found in the [sentinel-demo](https://github.com/alibaba/Sentinel/tree/master/sentinel-demo) module.
+   influxdb的持久化已经实现， 还需要修改相关调用的源码：
 
-### 5. Start Dashboard
+   ![image-20211118180110365](images/image-20211118180110365.png)
 
-> Note: Java 8 is required for building or running the dashboard.
+   1） MetricController的改动： 
 
-Sentinel also provides a simple dashboard application, on which you can monitor the clients and configure the rules in real time.
+   将原来的内存存储改为influxdb接口进行存储：
 
-![dashboard](https://user-images.githubusercontent.com/9434884/55449295-84866d80-55fd-11e9-94e5-d3441f4a2b63.png)
+   ![image-20211118180208507](images/image-20211118180208507.png)
 
-For details please refer to [Dashboard](https://github.com/alibaba/Sentinel/wiki/Dashboard).
+   2） MetricEntity改动后的完整源码：
 
-## Trouble Shooting and Logs
+   主要增加对象之间互相转换的接口（InfluxDBMetricEntity、FluxRecord）：
 
-Sentinel will generate logs for troubleshooting and real-time monitoring.
-All the information can be found in [logs](https://github.com/alibaba/Sentinel/wiki/Logs).
+   ```java
+   package com.alibaba.csp.sentinel.dashboard.datasource.entity;
+   
+   import com.alibaba.csp.sentinel.dashboard.influxdb.entity.InfluxDBMetricEntity;
+   import com.influxdb.query.FluxRecord;
+   
+   import java.util.Date;
+   
+   /**
+    * @author leyou
+    */
+   public class MetricEntity {
+       private Long id;
+       private Date gmtCreate;
+       private Date gmtModified;
+       private String app;
+       /**
+        * 监控信息的时间戳
+        */
+       private Date timestamp;
+       private String resource;
+       private Long passQps;
+       private Long successQps;
+       private Long blockQps;
+       private Long exceptionQps;
+   
+       /**
+        * summary rt of all success exit qps.
+        */
+       private double rt;
+   
+       /**
+        * 本次聚合的总条数
+        */
+       private int count;
+   
+       private int resourceCode;
+   
+       /**
+        * 对象转换（MetricEntity）
+        * @param oldEntity
+        * @return
+        */
+       public static MetricEntity copyOf(MetricEntity oldEntity) {
+           MetricEntity entity = new MetricEntity();
+           entity.setId(oldEntity.getId());
+           entity.setGmtCreate(oldEntity.getGmtCreate());
+           entity.setGmtModified(oldEntity.getGmtModified());
+           entity.setApp(oldEntity.getApp());
+           entity.setTimestamp(oldEntity.getTimestamp());
+           entity.setResource(oldEntity.getResource());
+           entity.setPassQps(oldEntity.getPassQps());
+           entity.setBlockQps(oldEntity.getBlockQps());
+           entity.setSuccessQps(oldEntity.getSuccessQps());
+           entity.setExceptionQps(oldEntity.getExceptionQps());
+           entity.setRt(oldEntity.getRt());
+           entity.setCount(oldEntity.getCount());
+           return entity;
+       }
+   
+       /**
+        * 对象转换（FluxRecord）
+        * @param fluxRecord
+        * @return
+        */
+       public static MetricEntity copyOf(FluxRecord fluxRecord) {
+           MetricEntity entity = new MetricEntity();
+           entity.setApp(toStr(fluxRecord.getValueByKey("app")));
+           entity.setResource(toStr(fluxRecord.getValueByKey("resource")));
+           entity.setBlockQps(toLongZero(fluxRecord.getValueByKey("blockQps")));
+           entity.setCount(toInt(fluxRecord.getValueByKey("count")));
+           entity.setExceptionQps(toLongZero(fluxRecord.getValueByKey("_exceptionQps")));
+           entity.setGmtCreate(toDate(toLong(fluxRecord.getValueByKey("gmtCreate"))));
+           entity.setGmtModified(toDate(toLong(fluxRecord.getValueByKey("gmtModified"))));
+           entity.setPassQps(toLongZero(fluxRecord.getValueByKey("passQps")));
+           entity.setSuccessQps(toLongZero(fluxRecord.getValueByKey("successQps")));
+           entity.setRt(toDouble(fluxRecord.getValueByKey("rt")));
+           entity.setTimestamp(toDate(toLong(fluxRecord.getValueByKey("timestamp"))));
+           return entity;
+       }
+   
+       /**
+        * 对象转换（FluxRecord）
+        * @param fluxRecord
+        * @return
+        */
+       public static MetricEntity copyOf(InfluxDBMetricEntity fluxRecord) {
+           MetricEntity entity = new MetricEntity();
+           entity.setGmtCreate(toDate(fluxRecord.getGmtCreate()));
+           entity.setGmtModified(toDate(fluxRecord.getGmtModified()));
+           entity.setApp(fluxRecord.getApp());
+           entity.setTimestamp(toDate(fluxRecord.getTimestamp()));
+           entity.setResource(fluxRecord.getResource());
+           entity.setPassQps(fluxRecord.getPassQps());
+           entity.setBlockQps(fluxRecord.getBlockQps());
+           entity.setSuccessQps(fluxRecord.getSuccessQps());
+           entity.setExceptionQps(fluxRecord.getExceptionQps());
+           entity.setRt(fluxRecord.getRt());
+           entity.setCount(fluxRecord.getCount());
+           return entity;
+       }
+   
+       /**
+        * 转换为时间
+        * @param time
+        * @return
+        */
+       private static Date toDate(Long time) {
+           if(null != time) {
+               return new Date(time);
+           }
+           return new Date();
+       }
+   
+   
+       /**
+        * 转换为字符串
+        *
+        * @param obj
+        * @return
+        */
+       private static String toStr(Object obj) {
+           return String.valueOf(obj);
+       }
+   
+       /**
+        * 转为换双精度类型
+        *
+        * @param obj
+        * @return
+        */
+       private static double toDouble(Object obj) {
+           if (null != obj) {
+               return Double.valueOf(toStr(obj));
+           }
+           return 0;
+       }
+   
+   
+       /**
+        * 转换为长整形， 默认为0
+        * @param obj
+        * @return
+        */
+       private static Long toLongZero(Object obj) {
+           if (null != obj) {
+               return Long.valueOf(toStr(obj));
+           }
+           return 0L;
+       }
+   
+       /**
+        * 转换为长整型
+        *
+        * @param obj
+        * @return
+        */
+       private static Long toLong(Object obj) {
+           if (null != obj) {
+               return Long.valueOf(toStr(obj));
+           }
+           return null;
+       }
+   
+       /**
+        * 转换为整型
+        *
+        * @param obj
+        * @return
+        */
+       private static int toInt(Object obj) {
+           if (null != obj) {
+               return Integer.valueOf(toStr(obj));
+           }
+           return 0;
+       }
+   
+       public synchronized void addPassQps(Long passQps) {
+           this.passQps += passQps;
+       }
+   
+       public synchronized void addBlockQps(Long blockQps) {
+           this.blockQps += blockQps;
+       }
+   
+       public synchronized void addExceptionQps(Long exceptionQps) {
+           this.exceptionQps += exceptionQps;
+       }
+   
+       public synchronized void addCount(int count) {
+           this.count += count;
+       }
+   
+       public synchronized void addRtAndSuccessQps(double avgRt, Long successQps) {
+           this.rt += avgRt * successQps;
+           this.successQps += successQps;
+       }
+   
+       /**
+        * {@link #rt} = {@code avgRt * successQps}
+        *
+        * @param avgRt      average rt of {@code successQps}
+        * @param successQps
+        */
+       public synchronized void setRtAndSuccessQps(double avgRt, Long successQps) {
+           this.rt = avgRt * successQps;
+           this.successQps = successQps;
+       }
+   
+       public Long getId() {
+           return id;
+       }
+   
+       public void setId(Long id) {
+           this.id = id;
+       }
+   
+       public Date getGmtCreate() {
+           return gmtCreate;
+       }
+   
+       public void setGmtCreate(Date gmtCreate) {
+           this.gmtCreate = gmtCreate;
+       }
+   
+       public Date getGmtModified() {
+           return gmtModified;
+       }
+   
+       public void setGmtModified(Date gmtModified) {
+           this.gmtModified = gmtModified;
+       }
+   
+       public String getApp() {
+           return app;
+       }
+   
+       public void setApp(String app) {
+           this.app = app;
+       }
+   
+       public Date getTimestamp() {
+           return timestamp;
+       }
+   
+       public void setTimestamp(Date timestamp) {
+           this.timestamp = timestamp;
+       }
+   
+       public String getResource() {
+           return resource;
+       }
+   
+       public void setResource(String resource) {
+           this.resource = resource;
+           this.resourceCode = resource.hashCode();
+       }
+   
+       public Long getPassQps() {
+           return passQps;
+       }
+   
+       public void setPassQps(Long passQps) {
+           this.passQps = passQps;
+       }
+   
+       public Long getBlockQps() {
+           return blockQps;
+       }
+   
+       public void setBlockQps(Long blockQps) {
+           this.blockQps = blockQps;
+       }
+   
+       public Long getExceptionQps() {
+           return exceptionQps;
+       }
+   
+       public void setExceptionQps(Long exceptionQps) {
+           this.exceptionQps = exceptionQps;
+       }
+   
+       public double getRt() {
+           return rt;
+       }
+   
+       public void setRt(double rt) {
+           this.rt = rt;
+       }
+   
+       public int getCount() {
+           return count;
+       }
+   
+       public void setCount(int count) {
+           this.count = count;
+       }
+   
+       public int getResourceCode() {
+           return resourceCode;
+       }
+   
+       public Long getSuccessQps() {
+           return successQps;
+       }
+   
+       public void setSuccessQps(Long successQps) {
+           this.successQps = successQps;
+       }
+   
+       @Override
+       public String toString() {
+           return "MetricEntity{" +
+                   "id=" + id +
+                   ", gmtCreate=" + gmtCreate +
+                   ", gmtModified=" + gmtModified +
+                   ", app='" + app + '\'' +
+                   ", timestamp=" + timestamp +
+                   ", resource='" + resource + '\'' +
+                   ", passQps=" + passQps +
+                   ", blockQps=" + blockQps +
+                   ", successQps=" + successQps +
+                   ", exceptionQps=" + exceptionQps +
+                   ", rt=" + rt +
+                   ", count=" + count +
+                   ", resourceCode=" + resourceCode +
+                   '}';
+       }
+   
+   }
+   ```
 
-## Bugs and Feedback
+   3） MetricFetcher的改动：
 
-For bug report, questions and discussions please submit [GitHub Issues](https://github.com/alibaba/sentinel/issues).
+   将持久化接口改为influxdb进行存储：
 
-Contact us via [Gitter](https://gitter.im/alibaba/Sentinel) or [Email](mailto:sentinel@linux.alibaba.com).
+   ![image-20211118180757516](images/image-20211118180757516.png)
 
-## Contributing
 
-Contributions are always welcomed! Please refer to [CONTRIBUTING](./CONTRIBUTING.md) for detailed guidelines.
 
-You can start with the issues labeled with [`good first issue`](https://github.com/alibaba/Sentinel/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
+### 3. 集成验证
 
-## Credits
+sentinel-dashboard也是一个spring boot服务， 这里直接将sentinel-dashboard自身接入Sentinel的管理。
 
-Thanks [Guava](https://github.com/google/guava), which provides some inspiration on rate limiting.
+1. pom配置
 
-And thanks for all [contributors](https://github.com/alibaba/Sentinel/graphs/contributors) of Sentinel!
+   增加sentinel自动化配置依赖：
 
-## Who is using
+   ```xml
+   <!-- Sentinel 限流组件 -->
+   <dependency>
+       <groupId>com.alibaba.cloud</groupId>
+       <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
+       <version>2.2.6.RELEASE</version>
+   </dependency>
+   ```
 
-These are only part of the companies using Sentinel, for reference only.
-If you are using Sentinel, please [add your company here](https://github.com/alibaba/Sentinel/issues/18) to tell us your scenario to make Sentinel better :)
+2. 工程配置文件
 
-![Alibaba Group](https://docs.alibabagroup.com/assets2/images/en/global/logo_header.png)
-![AntFin](https://user-images.githubusercontent.com/9434884/90598732-30961c00-e226-11ea-8c86-0b1d7f7875c7.png)
-![Taiping Renshou](http://www.cntaiping.com/tplresource/cms/www/taiping/img/home_new/tp_logo_img.png)
-![拼多多](http://cdn.pinduoduo.com/assets/img/pdd_logo_v3.png)
-![爱奇艺](https://user-images.githubusercontent.com/9434884/90598445-a51c8b00-e225-11ea-9327-3543525f3f2a.png)
-![Shunfeng Technology](https://user-images.githubusercontent.com/9434884/48463502-2f48eb80-e817-11e8-984f-2f9b1b789e2d.png)
-![二维火](https://user-images.githubusercontent.com/9434884/49358468-bc43de00-f70d-11e8-97fe-0bf05865f29f.png)
-![Mandao](https://user-images.githubusercontent.com/9434884/48463559-6cad7900-e817-11e8-87e4-42952b074837.png)
-![文轩在线](http://static.winxuancdn.com/css/v2/images/logo.png)
-![客如云](https://www.keruyun.com/static/krynew/images/logo.png)
-![亲宝宝](https://stlib.qbb6.com/wclt/img/home_hd/version1/title_logo.png)
-![金汇金融](https://res.jinhui365.com/r/images/logo2.png?v=1.527)
-![闪电购](http://cdn.52shangou.com/shandianbang/official-source/3.1.1/build/images/logo.png)
-=======
-# sentinel_modify
->>>>>>> 1cf36965f135237fdfd158de2d9e19aa22cf4f54
+   增加以下Sentinel的配置：
+
+   ```properties
+   spring.application.name=sentinel-dashboard
+   spring.cloud.sentinel.eager=true
+   spring.cloud.sentinel.transport.dashboard=127.0.0.1:8080
+   ```
+
+3. 启动sentinel-dashboard
+
+   进入后台，可以看到sentinel-dashboard已经成功接入，并且能够正常查看监控数据：
+
+   ![image-20211118181601831](images/image-20211118181601831.png)
+
+
+
+3. 进入influxdb监控后台查看数据
+
+   通过对influxdb的查询，可以看到数据已正常记录：
+
+   ![image-20211118181826445](images/image-20211118181826445.png)
+
+
+
+4. 图形化展示
+
+   通过influxdb的dashboard也是可以实现图形化的监控
+
+   ![image-20211118182027520](images/image-20211118182027520.png)
+
+   再做具体的监控配置：
+
+   ![image-20211118182119525](images/image-20211118182119525.png)
+
+   图形化展示：
+
+   ![image-20211117003906279](images/image-20211117003906279.png)
+
+   有了influxdb的数据， 我们也可以接入各种监控系统， 比如grafana,  这里就不再赘述。
